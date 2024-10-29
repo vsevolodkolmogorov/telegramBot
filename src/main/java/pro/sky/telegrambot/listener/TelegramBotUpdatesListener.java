@@ -11,6 +11,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import pro.sky.telegrambot.model.NotificationTask;
 import pro.sky.telegrambot.repository.NotificationTaskRepository;
+import pro.sky.telegrambot.service.NotificationTaskScheduler;
 
 import javax.annotation.PostConstruct;
 import java.time.LocalDateTime;
@@ -23,9 +24,9 @@ import java.util.regex.Pattern;
 @Service
 public class TelegramBotUpdatesListener implements UpdatesListener {
 
-    private Logger logger = LoggerFactory.getLogger(TelegramBotUpdatesListener.class);
+    private final Logger logger = LoggerFactory.getLogger(TelegramBotUpdatesListener.class);
+    private static final String REGEX = "(\\d{2}\\.\\d{2}\\.\\d{4}\\s\\d{2}:\\d{2})(\\s+)(.+)";
 
-    private boolean isAvailableCreateTask = false;
     private Long chatId;
 
     @Autowired
@@ -37,13 +38,11 @@ public class TelegramBotUpdatesListener implements UpdatesListener {
     @PostConstruct
     public void init() {
         telegramBot.setUpdatesListener(this);
-        checkTasks();
     }
 
     @Override
     public int process(List<Update> updates) {
-        String regex = "(\\d{2}\\.\\d{2}\\.\\d{4}\\s\\d{2}:\\d{2})(\\s+)(.+)";
-        Pattern pattern = Pattern.compile(regex);
+        Pattern pattern = Pattern.compile(REGEX);
         this.chatId = updates.get(0).message().chat().id();
 
         updates.forEach(update -> {
@@ -51,35 +50,27 @@ public class TelegramBotUpdatesListener implements UpdatesListener {
             logger.info("Text of message : {}", update.message().text());
 
             if (update.message().text().equals("/start")) {
-                sendMessage("Привет! Используй /createTask для создания задачи. \uD83E\uDD13");
+                sendMessage("Привет! Напиши дату и свою задачу! \uD83E\uDD13");
             }
 
-            if (isAvailableCreateTask) {
-                Matcher matcher = pattern.matcher(update.message().text());
+            Matcher matcher = pattern.matcher(update.message().text());
 
-                if (matcher.matches()) {
-                    LocalDateTime dateTime = LocalDateTime.parse(matcher.group(1), DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
-                    String message = matcher.group(3);
+            if (matcher.matches()) {
+                LocalDateTime dateTime = LocalDateTime.parse(matcher.group(1), DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
+                String message = matcher.group(3);
 
-                    NotificationTask nt = new NotificationTask(dateTime, message);
-                    repository.save(nt);
-                    sendMessage("Задача успешно сохранена! \uD83E\uDD73");
-                    isAvailableCreateTask = false;
-                } else {
-                    sendMessage("Задача должна быть в формате dd:mm:yy 00:00 text.");
-                    logger.info("Строка не соответствует паттерну.");
-                }
+                NotificationTask nt = new NotificationTask(dateTime, message);
+                repository.save(nt);
+                sendMessage("Задача успешно сохранена! \uD83E\uDD73");
+            } else {
+                logger.info("Строка не соответствует паттерну.");
             }
 
-            if (update.message().text().equals("/createTask")) {
-                sendMessage("Отправьте свою задачу следующим сообщением! \uD83D\uDE0E");
-                isAvailableCreateTask = true;
-            }
         });
         return UpdatesListener.CONFIRMED_UPDATES_ALL;
     }
 
-    private void sendMessage(String text) {
+    public void sendMessage(String text) {
         var sendMessage = new SendMessage(chatId, text);
 
         try {
@@ -89,14 +80,4 @@ public class TelegramBotUpdatesListener implements UpdatesListener {
         }
     }
 
-    @Scheduled(cron = "0 0/1 * * * *")
-    public void checkTasks() {
-        List<NotificationTask> notificationTaskList = repository.findAll();
-
-        for (NotificationTask n : notificationTaskList) {
-            if (LocalDateTime.now().truncatedTo(ChronoUnit.MINUTES).equals(n.getDate())) {
-                sendMessage("Задача: " + "'" + n.getText() + "'\n" + "Необходимо выполнить сегодня!");
-            }
-        }
-    }
 }
